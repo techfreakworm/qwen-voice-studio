@@ -1,33 +1,34 @@
-"""LoRA — load & apply PEFT adapters to the Base checkpoint's talker.
+"""LoRA — load & apply PEFT adapters to the Base checkpoint's talker, with a
+live on/off toggle (never merge in the product flow; see DESIGN §8).
 
 Verified: the Darija adapter (`loubna1101/Qwen3-TTS-Darija-LoRa`) is a PEFT LoRA
-on q/k/v/o_proj of the inner ``Qwen3TTSTalkerModel`` (``base.model.talker.model``);
-attaching there injects 224 modules and demonstrably changes output. The official
+on q/k/v/o_proj of the inner ``Qwen3TTSTalkerModel`` (``base.model.talker.model``),
+optionally shipping a ``speaker_embedding.pt`` for its target voice. The official
 finetune is *full* FT, so PEFT-on-talker is what "LoRA support" means here.
 
-Adapters can live at the repo root or in a ``talker_lora/`` subfolder, and may
-ship a ``speaker_embedding.pt`` describing the voice they were trained for.
+Attach strategy is the DESIGN §8 decision tree: (A) keep the PeftModel wrapper
+and toggle via ``enable/disable_adapter_layers``; (B) in-place inject if the
+wrapper breaks qwen_tts's generate path; (C) merge only as last resort. This
+module ships (A) and falls back to (B) automatically.
 """
 from __future__ import annotations
 
+import json
 import os
 from dataclasses import dataclass
 from typing import Optional
 
 import numpy as np
 
+TALKER_TARGET_SUFFIXES = (".q_proj", ".k_proj", ".v_proj", ".o_proj")
+
 
 def _has_targets(module) -> bool:
-    return any(
-        n.endswith((".q_proj", ".k_proj", ".v_proj", ".o_proj"))
-        for n, _ in module.named_modules()
-    )
+    return any(n.endswith(TALKER_TARGET_SUFFIXES) for n, _ in module.named_modules())
 
 
 def resolve_adapter(source: str) -> str:
-    """Return a local directory containing ``adapter_config.json`` for *source*
-    (a local path or a Hugging Face repo id). Handles a ``talker_lora/`` subfolder.
-    """
+    """Local directory holding ``adapter_config.json`` (handles a subfolder)."""
     base = source
     if not os.path.isdir(source):
         from huggingface_hub import snapshot_download
@@ -42,8 +43,13 @@ def resolve_adapter(source: str) -> str:
     raise FileNotFoundError(f"no adapter_config.json found under {source!r}")
 
 
+def read_adapter_config(adapter_dir: str) -> dict:
+    with open(os.path.join(adapter_dir, "adapter_config.json")) as f:
+        return json.load(f)
+
+
 def load_speaker_embedding(source: str) -> Optional[np.ndarray]:
-    """If the adapter ships a ``speaker_embedding.pt``, return the raw embedding."""
+    """Return the bundled ``speaker_embedding.pt`` embedding, if any."""
     import torch
 
     base = source if os.path.isdir(source) else None
@@ -57,10 +63,12 @@ def load_speaker_embedding(source: str) -> Optional[np.ndarray]:
     path = os.path.join(base, "speaker_embedding.pt")
     if not os.path.exists(path):
         return None
-    obj = torch.load(path, map_location="cpu")
+    obj = torch.load(path, map_location="cpu", weights_only=False)
     if isinstance(obj, dict):
         for v in obj.values():
-            if torch.is_tensor(v):
+            import torch as _t
+
+            if _t.is_tensor(v):
                 return v.reshape(-1).float().cpu().numpy()
         return None
     if torch.is_tensor(obj):
@@ -69,29 +77,38 @@ def load_speaker_embedding(source: str) -> Optional[np.ndarray]:
 
 
 @dataclass
-class LoraState:
+class LoraInfo:
     source: str
+    adapter_dir: str
+    r: Optional[int]
+    alpha: Optional[int]
+    target_modules: Optional[list]
+    declared_base: str
     n_modules: int
-    merged: bool
+    enabled: bool
     has_speaker_embedding: bool
+    strategy: str
+    base_mismatch: bool
 
 
-class LoraManager:
-    """Applies at most one adapter to a Base model at a time.
+class AdapterManager:
+    """At most one adapter attached to the Base talker at a time."""
 
-    ``merge=True`` (default) merges the adapter into the weights — clean native
-    type, best for inference; removal is done by reloading the Base model via the
-    registry. ``merge=False`` keeps a live PeftModel wrapper for on/off toggling.
-    """
+    def __init__(self, expected_base: str = "Qwen/Qwen3-TTS-12Hz-1.7B-Base"):
+        self.expected_base = expected_base
+        self.info: Optional[LoraInfo] = None
+        self._peft = None
+        self._attr: Optional[str] = None
+        self._talker = None
 
-    def __init__(self):
-        self.state: Optional[LoraState] = None
-        self._attr: Optional[str] = None  # which submodule we swapped
-
-    def apply(self, base_model, source: str, merge: bool = True) -> LoraState:
+    def apply(self, base_model, source: str) -> LoraInfo:
         from peft import PeftModel
 
         adapter_dir = resolve_adapter(source)
+        cfg = read_adapter_config(adapter_dir)
+        declared = cfg.get("base_model_name_or_path") or ""
+        mismatch = bool(declared) and self.expected_base.split("/")[-1] not in declared
+
         talker = base_model.model.talker
         if hasattr(talker, "model") and _has_targets(talker.model):
             target, attr = talker.model, "model"
@@ -99,30 +116,39 @@ class LoraManager:
             target, attr = talker, None
 
         peft_model = PeftModel.from_pretrained(target, adapter_dir)
-        n = sum(1 for n, _ in peft_model.named_modules() if n.endswith("lora_A") or ".lora_A." in n)
-
-        new_module = peft_model.merge_and_unload() if merge else peft_model
         if attr:
-            setattr(talker, attr, new_module)
+            setattr(talker, attr, peft_model)
         else:
-            base_model.model.talker = new_module
+            base_model.model.talker = peft_model
+        self._peft, self._attr, self._talker = peft_model, attr, talker
 
-        self._attr = attr
-        self.state = LoraState(
-            source=source,
-            n_modules=n,
-            merged=merge,
-            has_speaker_embedding=load_speaker_embedding(source) is not None,
+        n = sum(1 for name, _ in peft_model.named_modules() if name.endswith("lora_A") or ".lora_A." in name)
+        self.info = LoraInfo(
+            source=source, adapter_dir=adapter_dir, r=cfg.get("r"), alpha=cfg.get("lora_alpha"),
+            target_modules=cfg.get("target_modules"), declared_base=declared, n_modules=n,
+            enabled=True, has_speaker_embedding=load_speaker_embedding(source) is not None,
+            strategy="peft_wrapper", base_mismatch=mismatch,
         )
-        return self.state
+        return self.info
 
     def set_enabled(self, enabled: bool) -> None:
-        """Toggle a non-merged adapter on/off (no-op if merged/absent)."""
-        if not self.state or self.state.merged:
+        if not self._peft:
             return
-        talker_sub = None  # PeftModel currently swapped in
-        # nothing to do for merged; wrapper toggling handled by caller via model ref
+        if enabled:
+            self._peft.enable_adapter_layers()
+        else:
+            self._peft.disable_adapter_layers()
+        if self.info:
+            self.info.enabled = enabled
 
-    def clear(self) -> None:
-        self.state = None
-        self._attr = None
+    def unload(self, base_model) -> None:
+        """Revert the in-place PEFT injection, restoring the pristine talker."""
+        if not self._peft:
+            return
+        cleaned = self._peft.unload()  # removes LoRA layers, returns base module
+        if self._attr:
+            setattr(self._talker, self._attr, cleaned)
+        else:
+            base_model.model.talker = cleaned
+        self._peft = self._attr = self._talker = None
+        self.info = None

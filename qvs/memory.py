@@ -79,7 +79,7 @@ class MemoryGuard:
     unwind a runaway allocation.
     """
 
-    def __init__(self, hard_gb: float = 80.0, soft_gb: float | None = 76.0, interval: float = 0.5):
+    def __init__(self, hard_gb: float = 76.0, soft_gb: float | None = 72.0, interval: float = 0.5):
         self.hard_gb = hard_gb
         self.soft_gb = soft_gb
         self.interval = interval

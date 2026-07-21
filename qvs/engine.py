@@ -78,6 +78,20 @@ def apply_seed(seed: int) -> None:
         torch.cuda.manual_seed_all(seed)
 
 
+def free_cache() -> None:
+    """Release device cache between generations to keep committed memory bounded
+    (MPS accumulates intermediate buffers across sequential long-form chunks)."""
+    import torch
+
+    try:
+        if torch.backends.mps.is_available():
+            torch.mps.empty_cache()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+    except Exception:
+        pass
+
+
 # ---- long-form chunking -------------------------------------------------------
 _SENT_SPLIT = re.compile(r"(?<=[.!?。！？…])\s+")
 
@@ -112,6 +126,7 @@ def _run(model, method: str, texts: list[str], params: GenParams, **fixed) -> tu
     for t in texts:
         wavs, sr = fn(text=t, **fixed, **params.to_kwargs())
         wavs_out.append(np.asarray(wavs[0], dtype=np.float32))
+        free_cache()
     return audio.concat(wavs_out, sr), sr
 
 
@@ -150,4 +165,5 @@ def synth_clone(model, text: str, language: str, params: GenParams,
             text=t, language=language, voice_clone_prompt=voice_clone_prompt, **params.to_kwargs()
         )
         wavs_out.append(np.asarray(wavs[0], dtype=np.float32))
+        free_cache()
     return audio.concat(wavs_out, sr), sr
