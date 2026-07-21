@@ -48,7 +48,7 @@ Built on [Qwen3-TTS-12Hz-1.7B](https://huggingface.co/Qwen) (Base / CustomVoice 
 - The open-source `qwen-tts` wrapper does **not** expose audio-token streaming; generation is generate-then-play (a few seconds per utterance on M-series).
 - LoRA applies to the **Base** checkpoint only, **per-generation** (no persistent on/off toggle) — a consequence of ZeroGPU's process model.
 - MPS and CUDA outputs are **not** bit-identical (expected).
-- On the Space, the first request per mode is slower (~20 s) as the model lazy-loads onto the GPU; subsequent requests are fast.
+- On the Space, models warm into memory for ~20 s after a cold start; once warm, every request is fast (~6 s on the RTX Pro 6000, running on `cuda:0`).
 
 ## Troubleshooting
 | Symptom | Fix |
