@@ -102,6 +102,32 @@ body, .gradio-container {{
 }}
 .qvs-meter b {{ color: var(--signal); font-weight:500; }}
 
+/* community banner — top strip */
+.qvs-banner {{
+  display:flex; align-items:center; flex-wrap:wrap; gap:10px;
+  padding:9px 14px; margin: 2px 0 6px;
+  border:1px solid var(--line); border-radius:8px;
+  background: linear-gradient(90deg, rgba(240,169,59,0.09), rgba(255,107,74,0.06) 55%, rgba(0,0,0,0.15));
+}}
+.qvs-banner-label {{
+  font-family:'IBM Plex Mono', monospace; font-size:11px; letter-spacing:0.14em;
+  text-transform:uppercase; color:var(--muted);
+}}
+.qvs-banner-btn {{
+  display:inline-flex; align-items:center; gap:8px;
+  padding:6px 12px; border-radius:6px; text-decoration:none !important;
+  border:1px solid var(--line); background:rgba(0,0,0,0.22);
+  font-family:'IBM Plex Mono', monospace; font-size:12px; letter-spacing:0.03em;
+  color:var(--signal) !important; transition: border-color .15s ease, background .15s ease;
+}}
+.qvs-banner-btn:hover {{ border-color:var(--signal); background:rgba(240,169,59,0.12); }}
+.qvs-banner-btn .arw {{ color:var(--muted); transition: transform .15s ease, color .15s ease; }}
+.qvs-banner-btn:hover .arw {{ transform:translateX(3px); color:var(--signal); }}
+.qvs-banner-btn.skool {{ color:var(--hot) !important; }}
+.qvs-banner-btn.skool:hover {{ border-color:var(--hot); background:rgba(255,107,74,0.12); }}
+.qvs-banner-btn.skool:hover .arw {{ color:var(--hot); }}
+@media (max-width:640px){{ .qvs-banner-label {{ width:100%; }} }}
+
 /* eyebrow labels */
 .qvs-eyebrow {{
   font-family:'IBM Plex Mono', monospace; font-size:11px; letter-spacing:0.16em;
@@ -171,6 +197,18 @@ def header_html() -> str:
       </div>
     </div>
     """
+
+
+def banner_html() -> str:
+    return (
+        '<div class="qvs-banner">'
+        '<span class="qvs-banner-label">Join the community</span>'
+        '<a class="qvs-banner-btn" href="https://discord.gg/qbn3exeEXa" target="_blank" rel="noopener noreferrer">'
+        'Discord — chat with the maker <span class="arw">&rarr;</span></a>'
+        '<a class="qvs-banner-btn skool" href="https://www.skool.com/techfreaks-ai-club-6037/about" target="_blank" rel="noopener noreferrer">'
+        'Skool — TechFreaks AI Club <span class="arw">&rarr;</span></a>'
+        '</div>'
+    )
 
 
 def footer_html() -> str:

@@ -288,6 +288,7 @@ def do_design_to_library(design_audio, design_text, name):
 # ---- UI ----------------------------------------------------------------------
 def build() -> gr.Blocks:
     with gr.Blocks(title="Qwen Voice Studio", analytics_enabled=False) as demo:
+        gr.HTML(theme.banner_html())
         gr.HTML(theme.header_html())
         meter = gr.HTML(meter_html())
         voice_pickers: list = []  # refreshed together on save
