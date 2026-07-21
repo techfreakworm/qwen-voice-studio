@@ -27,3 +27,6 @@ data/
 .idea/
 .vscode/
 *.log
+
+# brainstorming visual companion
+.superpowers/
