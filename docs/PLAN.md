@@ -33,3 +33,9 @@
 
 ## Cross-cutting rules
 Commit at least per-task, push regularly; long runs = background shells with monitoring; watchdog active in every model-touching run; never a second model-holding process; on the 2nd failed fix of any bug — stop patching, bring it to the brain for first-principles review; MPS↔CUDA outputs are never bit-compared.
+
+## Post-v1 verification (non-blocking; do cheaply, no redeploy pressure)
+Both hard gates are met and the Space is verified 5/5. Remaining low-priority checks (mind the 40 min/day ZeroGPU quota — spend a minute, not more):
+1. **D8 A/B regression** — add one fixed-seed adapter-on vs adapter-empty pair to the Space `gradio_client` suite; assert the two differ (the per-request LoRA guarantee, regression-tested where it ships).
+2. **Worker-persistence / quota math** — run a 3-consecutive-same-mode burst on the Space; if calls #2/#3 aren't faster than #1, models reload per call and GPU-seconds/request must be re-costed against the 40 min/day budget. State the true behavior in DESIGN once measured.
+3. **In-fork device log** — one-time: emit `next(model.parameters()).device` inside a `@spaces.GPU` handler and confirm `cuda:0` (functionally implied by working generations; cheap to make explicit).
