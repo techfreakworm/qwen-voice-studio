@@ -34,8 +34,16 @@
 ## Cross-cutting rules
 Commit at least per-task, push regularly; long runs = background shells with monitoring; watchdog active in every model-touching run; never a second model-holding process; on the 2nd failed fix of any bug — stop patching, bring it to the brain for first-principles review; MPS↔CUDA outputs are never bit-compared.
 
-## Post-v1 verification (non-blocking; do cheaply, no redeploy pressure)
-Both hard gates are met and the Space is verified 5/5. Remaining low-priority checks (mind the 40 min/day ZeroGPU quota — spend a minute, not more):
-1. **D8 A/B regression** — add one fixed-seed adapter-on vs adapter-empty pair to the Space `gradio_client` suite; assert the two differ (the per-request LoRA guarantee, regression-tested where it ships).
-2. **Worker-persistence / quota math** — run a 3-consecutive-same-mode burst on the Space; if calls #2/#3 aren't faster than #1, models reload per call and GPU-seconds/request must be re-costed against the 40 min/day budget. State the true behavior in DESIGN once measured.
-3. **In-fork device log** — one-time: emit `next(model.parameters()).device` inside a `@spaces.GPU` handler and confirm `cuda:0` (functionally implied by working generations; cheap to make explicit).
+## Post-v1 (non-blocking; deferred by design — mind the 40 min/day ZeroGPU quota, E2)
+Both hard gates are met and the Space is verified 5/5. Deferred, in rough priority:
+
+**Feature / polish gaps:**
+1. **`subtalker_dosample` UI exposure** — the one known gap against the "every feature" mandate; smallest possible scope; first in line for any follow-up session.
+2. Dynamic-`duration` callable (queue-priority polish; does NOT affect quota — quota = effective runtime × size multiplier, not declared duration).
+3. int16 mic-input scaling consistency (scale by dtype, don't peak-normalize).
+4. Residency hysteresis (re-expand < 55 GB) + status-strip eviction visibility.
+
+**Verification checks (do cheaply, ≤ 1 GPU-min each):**
+5. **D8 A/B regression** — fixed-seed adapter-set vs adapter-empty pair in the Space `gradio_client` suite; assert they differ.
+6. **Worker-persistence / quota math** — 3-consecutive-same-mode burst; if #2/#3 aren't faster than #1, models reload per call → re-cost GPU-seconds/request vs the 40 min/day budget; state the true behavior in DESIGN once measured.
+7. **In-fork device log** — emit `next(model.parameters()).device` inside a `@spaces.GPU` handler; confirm `cuda:0`.

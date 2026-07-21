@@ -82,6 +82,8 @@ Layered: (0) env/version print + memory gauge sanity; (1) headless engine smokes
 ## 10. Pinned versions
 py 3.12; **torch==2.11.0 both platforms** (ZeroGPU patch-exact supported set {2.8.0, 2.9.1, 2.10.0, 2.11.0}; 2.13 kept only as a local scratch venv); transformers==4.57.3 (**5.x breaks qwen_tts**); qwen-tts==0.1.1; peft==0.19.1; accelerate==1.12.0; huggingface_hub<1.0; gradio 6.17.3; spaces (Space only). attn = **sdpa everywhere** (no flash-attn). `requirements.txt` = Space runtime; `requirements-dev.txt` = + playwright, pytest, psutil.
 
+The version matrix is **deliberately split**: local dev torch 2.13 (MPS-certified), Space torch 2.11.0 (CUDA-certified). Neither side changes without rerunning that platform's full suite; local torch changes additionally require re-running the certification trio (mel A/B, bit-exact seed check, 6/6 engine). The Space `gradio_client` suite is the sole cross-platform parity gate for any functional change.
+
 ## 11. Risks register (accepted)
 bf16-on-MPS numerics (mitigated: A/B smoke + fp32 contingency); torch 2.13 Space rejection (mitigated: pin ladder + re-smoke trigger); module-level cuda orphan regression (mitigated: fork_move flag + device-log acceptance); adapter key-prefix mismatch (mitigated: inspect-first + remap); Space cold-boot re-downloads ~14 GB (accepted: private personal Space; persistent storage = money = operator call); streaming absent (accepted: wrapper limitation, documented).
 
