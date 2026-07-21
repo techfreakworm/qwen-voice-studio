@@ -374,10 +374,10 @@ def build() -> gr.Blocks:
 if __name__ == "__main__":
     demo = build()
     demo.queue(default_concurrency_limit=1)  # one model, one device — serialize (DESIGN §6)
-    demo.launch(
-        theme=theme.studio_theme(),
-        css=theme.CSS,
-        server_name=os.environ.get("QVS_HOST", "127.0.0.1"),
-        server_port=int(os.environ.get("QVS_PORT", "7860")),
-        show_error=True,
-    )
+    launch_kwargs = dict(theme=theme.studio_theme(), css=theme.CSS, show_error=True, ssr_mode=False)
+    if on_zerogpu():
+        launch_kwargs["server_name"] = "0.0.0.0"  # HF health check must reach the app
+    else:
+        launch_kwargs["server_name"] = os.environ.get("QVS_HOST", "127.0.0.1")
+        launch_kwargs["server_port"] = int(os.environ.get("QVS_PORT", "7860"))
+    demo.launch(**launch_kwargs)
