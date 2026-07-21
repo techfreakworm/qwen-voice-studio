@@ -9,7 +9,6 @@ path used for reference audio.
 """
 from __future__ import annotations
 
-import functools
 import os
 
 
@@ -52,26 +51,13 @@ def get_dtype():
     return torch.bfloat16
 
 
-@functools.lru_cache(maxsize=1)
-def _flash_attn_available() -> bool:
-    try:
-        import flash_attn  # noqa: F401
-
-        return True
-    except Exception:
-        return False
-
-
 def get_attn_impl(device: str | None = None) -> str:
-    """flash_attention_2 on CUDA when the wheel is present, else sdpa.
-
-    flash-attn is CUDA-only, so MPS always uses sdpa. sdpa is a safe default on
-    CUDA too (just a little slower than flash-attn).
+    """sdpa everywhere (DESIGN D7). flash-attn is deliberately NOT auto-selected:
+    its import can succeed pre-fork on CUDA while the sm_120 (Blackwell) kernels
+    are wrong/untested — a silent-corruption risk for zero fidelity gain. Override
+    only via the explicit QVS_ATTN env for future experiments.
     """
-    dev = device or target_device()
-    if dev == "cuda" and _flash_attn_available():
-        return "flash_attention_2"
-    return "sdpa"
+    return os.environ.get("QVS_ATTN", "sdpa")
 
 
 # ---- optional ZeroGPU decorator ----------------------------------------------

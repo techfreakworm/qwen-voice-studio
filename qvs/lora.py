@@ -63,12 +63,16 @@ def load_speaker_embedding(source: str) -> Optional[np.ndarray]:
     path = os.path.join(base, "speaker_embedding.pt")
     if not os.path.exists(path):
         return None
-    obj = torch.load(path, map_location="cpu", weights_only=False)
+    try:
+        # weights_only=True: never pickle-execute an arbitrary user-supplied repo.
+        obj = torch.load(path, map_location="cpu", weights_only=True)
+    except Exception:
+        return None  # refuse rather than fall back to unsafe loading
     if isinstance(obj, dict):
+        if torch.is_tensor(obj.get("embedding")):
+            return obj["embedding"].reshape(-1).float().cpu().numpy()
         for v in obj.values():
-            import torch as _t
-
-            if _t.is_tensor(v):
+            if torch.is_tensor(v):
                 return v.reshape(-1).float().cpu().numpy()
         return None
     if torch.is_tensor(obj):
@@ -104,6 +108,8 @@ class AdapterManager:
     def apply(self, base_model, source: str) -> LoraInfo:
         from peft import PeftModel
 
+        if self._peft is not None:  # never nest PeftModel wrappers — clear any prior adapter first
+            self.unload(base_model)
         adapter_dir = resolve_adapter(source)
         cfg = read_adapter_config(adapter_dir)
         declared = cfg.get("base_model_name_or_path") or ""

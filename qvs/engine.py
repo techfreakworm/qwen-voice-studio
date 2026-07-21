@@ -93,7 +93,9 @@ def free_cache() -> None:
 
 
 # ---- long-form chunking -------------------------------------------------------
-_SENT_SPLIT = re.compile(r"(?<=[.!?。！？…])\s+")
+# \s* (not \s+): CJK sentences have no whitespace after 。！？, so \s+ would never
+# split them and long-form would collapse to one chunk.
+_SENT_SPLIT = re.compile(r"(?<=[.!?。！？…])\s*")
 
 
 def split_sentences(text: str) -> list[str]:

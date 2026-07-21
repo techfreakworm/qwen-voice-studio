@@ -13,7 +13,9 @@ from typing import Optional
 
 import numpy as np
 
-VOICE_DIR = os.environ.get("QVS_VOICE_DIR", "voice_library")
+# Under data/ (gitignored): saved clone prompts are biometric-adjacent and must
+# never be committed to the public repo.
+VOICE_DIR = os.environ.get("QVS_VOICE_DIR", "data/voices")
 
 
 def _ensure_dir() -> str:
@@ -80,7 +82,7 @@ def load_voice(name: str):
     import torch
     from qwen_tts import VoiceClonePromptItem
 
-    payload = torch.load(_path(name), map_location="cpu", weights_only=False)
+    payload = torch.load(_path(name), map_location="cpu", weights_only=True)
     items = []
     for d in payload["items"]:
         ref_code = d.get("ref_code")

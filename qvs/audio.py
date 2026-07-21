@@ -36,8 +36,22 @@ def ref_from_gradio(audio) -> Optional[tuple[np.ndarray, int]]:
     return None
 
 
-def concat(wavs: list[np.ndarray], sr: int, gap_s: float = 0.15) -> np.ndarray:
-    """Join chunk waveforms with a short silence between them (long-form)."""
+def _edge_fade(w: np.ndarray, sr: int, ms: float = 8.0) -> np.ndarray:
+    """Linear fade-in/out on the chunk edges so joins into the silence gap don't
+    click (a hard cut from a non-zero sample is a step discontinuity)."""
+    n = min(int(sr * ms / 1000.0), len(w) // 2)
+    if n <= 0:
+        return w
+    w = w.astype(np.float32, copy=True)
+    ramp = np.linspace(0.0, 1.0, n, dtype=np.float32)
+    w[:n] *= ramp
+    w[-n:] *= ramp[::-1]
+    return w
+
+
+def concat(wavs: list[np.ndarray], sr: int, gap_s: float = 0.12, fade_ms: float = 8.0) -> np.ndarray:
+    """Join chunk waveforms with a short silence between them (long-form),
+    edge-fading each chunk so the joins are click-free."""
     if not wavs:
         return np.zeros(0, dtype=np.float32)
     if len(wavs) == 1:
@@ -45,7 +59,7 @@ def concat(wavs: list[np.ndarray], sr: int, gap_s: float = 0.15) -> np.ndarray:
     gap = np.zeros(int(sr * gap_s), dtype=np.float32)
     out: list[np.ndarray] = []
     for i, w in enumerate(wavs):
-        out.append(np.asarray(w, dtype=np.float32))
+        out.append(_edge_fade(np.asarray(w, dtype=np.float32), sr, fade_ms))
         if i != len(wavs) - 1:
             out.append(gap)
     return np.concatenate(out)
