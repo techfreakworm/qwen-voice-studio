@@ -29,7 +29,10 @@ from .memory import committed_gb
 
 class ModelRegistry:
     def __init__(self, residency: Optional[str] = None):
-        self.residency = residency or os.environ.get("QVS_RESIDENCY", "auto")
+        # ZeroGPU: 48 GB half-card easily holds all 3 (~16 GB) — no eviction.
+        # Local: adaptive by default (evict when RAM is tight).
+        default = "all" if on_zerogpu() else "auto"
+        self.residency = residency or os.environ.get("QVS_RESIDENCY", default)
         self.fork_move = self.residency == "fork_move"
         self.on_cpu = on_zerogpu()
         self.device = "cuda" if on_zerogpu() else target_device()

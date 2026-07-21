@@ -1,3 +1,16 @@
+---
+title: Qwen Voice Studio
+emoji: 🎙️
+colorFrom: yellow
+colorTo: red
+sdk: gradio
+sdk_version: 6.17.3
+app_file: app.py
+pinned: false
+license: apache-2.0
+short_description: Cloning, 9 preset voices, voice design & LoRA on Qwen3-TTS 1.7B
+---
+
 # qwen-voice-studio
 
 The open-source voice studio for **Qwen3-TTS-12Hz-1.7B** — voice cloning, 9 premium preset voices with emotion control, and text-described voice design, in one Gradio app. **Fidelity first.** Runs natively on Apple silicon (MPS) and deploys to Hugging Face ZeroGPU.

@@ -14,7 +14,7 @@ import numpy as np
 
 from qvs import audio as qaudio
 from qvs import config, engine, voices
-from qvs.device import get_attn_impl, gpu, target_device
+from qvs.device import get_attn_impl, gpu, on_zerogpu, target_device
 from qvs.lora import AdapterManager, load_speaker_embedding
 from qvs.memory import MemoryGuard, snapshot
 from qvs.registry import ModelRegistry
@@ -22,6 +22,11 @@ from qvs.ui import theme
 
 REG = ModelRegistry()
 MGR = AdapterManager()
+
+# ZeroGPU: place all three checkpoints on CUDA at module level (emulation mode),
+# per the ZeroGPU guidance — never lazy-move inside @spaces.GPU.
+if on_zerogpu():
+    REG.preload_all()
 
 NONE_VOICE = "— none —"
 LANG_CHOICES = list(config.LANGUAGES.keys())
