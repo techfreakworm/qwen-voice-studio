@@ -10,6 +10,9 @@
 | D4 | 5 tabs; LoRA Lab = management-only; Design→Clone bridge | No duplicated generation UI; library unifies voice assets | 2026-07-21 |
 | D5 | Local `device_map="mps"`+FALLBACK; Space CPU→module `.to(cuda)`; DevicePolicy seam | Empirically proven local; docs-mandated Space path | 2026-07-21 |
 | D6 | Python 3.12 | ZeroGPU parity (3.12.12); wheel maturity (onnxruntime) | 2026-07-21 |
-| D7 | ZeroGPU large slice; sdpa; no compile; dynamic duration 30–120 s; torch ladder 2.13→2.11.0 | 48 GB ≫ 16 GB need; wheel risk zero; quota priority | 2026-07-21 |
-| M1 | Memory: vm_stat gauge; warn 72 / abort 76; adaptive degrade >65; fp32 ⇒ single-resident | 55 GB operator baseline; 80 GB OS-crash gate | 2026-07-21 |
-| E1 | Escalation: only real-money items (ZeroGPU credits, persistent storage) go to operator | Everything else delegated to brain-proxy | 2026-07-21 |
+| D7 | ZeroGPU large slice; **sdpa everywhere (no flash-attn auto-select)**; no compile; **torch==2.11.0 both platforms** | Patch-exact ZeroGPU list (2.9.0 excluded but 2.9.1 in ⇒ version-specific patches); unlisted torch = silent GPU-attach breakage, not a clean rejection | 2026-07-21 |
+| M1 | Memory: vm_stat gauge; warn 72 / abort 76; adaptive degrade; fp32 ⇒ single-resident | 55 GB operator baseline; 80 GB OS-crash gate | 2026-07-21 |
+| M2 | Request-time adaptive residency (`QVS_RESIDENCY=auto`: auto-evict >60 GB, **darwin-only**, adapter-pinned) | Operator baseline fluctuates 45–58 GB; startup-only check insufficient (hit 77.3 GB abort) | 2026-07-21 |
+| D8 | **LoRA applied per-generation inside the @spaces.GPU fork** (Clone adapter field; LoRA Lab = inspect + self-contained quick-test), NOT global apply+toggle | ZeroGPU forks don't persist in-place model mutations; applying outside a fork throws "Low-level CUDA init". Supersedes D3's toggle mechanism for the shipped app | 2026-07-21 |
+| D9 | ZeroGPU: **lazy-load models in-fork on first request**, NOT module-level preload | Module-level preload (14 GB download + all-3 load + ZeroGPU tensor-packing) overran the Space startup window → RUNTIME_ERROR after "Running"; lazy load starts the server instantly | 2026-07-21 |
+| E1 | Escalation: only real-money items (ZeroGPU credit top-ups, persistent storage) go to operator; **stay within PRO's included 40 min/day ZeroGPU quota** | Everything else delegated to brain-proxy | 2026-07-21 |

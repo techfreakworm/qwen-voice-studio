@@ -20,7 +20,8 @@ Shared: 10 languages + Auto (via `get_supported_languages()`), sampling knobs in
 | Device | mps | cuda (half RTX Pro 6000, 48 GB) |
 | Load | `from_pretrained(device_map="mps", dtype=bf16, attn_implementation="sdpa")` | `from_pretrained(dtype=bf16, attn="sdpa")` → module-level `.to("cuda")` (CUDA emulation; per ZeroGPU docs, never lazy-move inside `@spaces.GPU`) |
 | Env | `PYTORCH_ENABLE_MPS_FALLBACK=1` | `@spaces.GPU(duration=callable)`, size default `large` |
-| Python / torch | 3.12 / 2.13 (dev-validated) | 3.12.12 / torch pin ladder: 2.13.* → fallback 2.11.0 + local re-smoke |
+| Python / torch | 3.12 / 2.11.0 (2.13 = scratch venv) | 3.12.12 / torch==2.11.0 (ZeroGPU patch-exact) |
+| Load (as shipped) | `from_pretrained(device_map="mps", dtype=bf16, attn="sdpa")` | CPU load → `.to("cuda")` **lazily in the first `@spaces.GPU` request per mode** (§13, D9) |
 | attn / compile | sdpa / no torch.compile | sdpa / no torch.compile (AOT-inductor = post-v1 only) |
 | Residency | all-3-resident (adaptive degrade, §6) | all-3 on cuda at startup; `QVS_RESIDENCY=fork_move` fallback flag |
 
@@ -71,13 +72,25 @@ Gauge = vm_stat committed ("Memory Used"), NOT process RSS (undercounts on MPS).
 Module-level: build models, `.to("cuda")` at import (emulation mode). Handlers: `@spaces.GPU(duration=estimate)` where `estimate = clamp(15 + k·expected_new_tokens, 30, 120)`; calibrate k from first Space runs; log GPU-seconds per request. First acceptance on Space: two consecutive generations with `next(model.parameters()).device` logged inside the fork both times → proves no orphan; if orphaned, flip `QVS_RESIDENCY=fork_move` (build CPU, idempotent move inside fork) — flag flip, not redesign. Quota: PRO 40 min/day; overage = pre-paid credits = **operator approval required**.
 
 ## 8. LoRA design + acceptance
+> **SHIPPED (D8, supersedes the toggle design below): LoRA is applied PER-GENERATION inside the `@spaces.GPU` fork** (attach → generate → `unload`), never a global apply+toggle. ZeroGPU forks don't persist in-place model mutations across requests, and applying outside a fork throws "Low-level CUDA init". The Clone tab has an optional adapter field; LoRA Lab = inspect config + a self-contained quick-test. Verified on the live Space (clone+adapter, quick-test). The toggle reasoning below is the local single-process analysis D8 supersedes for the shipped app.
+
 Mechanism: unmerged PEFT attach at `base.model.talker.model` (q/k/v/o_proj, per Darija r8/α16), toggle = enable/disable_adapter_layers; removal = unload(); **never merge_and_unload in product flow**. Attach implementation decision tree: **(A)** keep PeftModel wrapper (`talker.model = PeftModel(...)`), toggle via `enable_adapters()/disable_adapters()` — test with generate smoke; if it works, ship A. **(B)** if A breaks the generate path → `peft.inject_adapter_in_model` (model identity & module tree stay native), toggle by iterating LoraLayers. **(C)** last resort → `merge_and_unload` with documented one-way semantics ("toggle off" = reload Base talker; no repeated merge/reload cycles). Acceptance (fixed seed, adapter-on vs -off): (i) `generate_voice_clone` works post-attach; (ii) toggle OFF→ON changes output audibly, <1 s; (iii) after unload, same-seed generation matches pre-attach baseline; (iv) Darija adapter + bundled `speaker_embedding.pt` {(2048,), speaker_id 3000} through the x-vector path yields the Darija speaker's voice, audibly distinct from adapter-off. Uploads: accept zip/safetensors+config; store under data/adapters.
 
 ## 9. Testing strategy
 Layered: (0) env/version print + memory gauge sanity; (1) headless engine smokes per mode (wav exists, duration>0.5 s, RMS above silence floor, sr==API sr, no NaN); (2) MPS silent-corruption check ONCE: mel/STFT path (modeling_qwen3_tts.py:447/459) MPS-vs-CPU cosine >0.999 IF stft executes natively (`FALLBACK=1` only rescues *unimplemented* ops — implemented-but-buggy fails silently) + clone-resemblance ear check; (3) Playwright full UI walkthrough, every tab + param, **programmatic audio asserts** (screenshots prove UI state, never audio); (4) same suite against the private Space. Determinism policy: same-seed repeatability asserted same-device only; MPS vs CUDA never bit-identical — assert properties, not waveforms.
 
 ## 10. Pinned versions
-py 3.12; torch 2.13 (dev) with Space ladder →2.11.0; transformers==4.57.3 (**5.x breaks qwen_tts**); qwen-tts==0.1.1; peft==0.19.1; accelerate==1.12.0; huggingface_hub<1.0; gradio 6.17.3; spaces (Space only). `requirements.txt` = Space runtime; `requirements-dev.txt` = + playwright, pytest, psutil.
+py 3.12; **torch==2.11.0 both platforms** (ZeroGPU patch-exact supported set {2.8.0, 2.9.1, 2.10.0, 2.11.0}; 2.13 kept only as a local scratch venv); transformers==4.57.3 (**5.x breaks qwen_tts**); qwen-tts==0.1.1; peft==0.19.1; accelerate==1.12.0; huggingface_hub<1.0; gradio 6.17.3; spaces (Space only). attn = **sdpa everywhere** (no flash-attn). `requirements.txt` = Space runtime; `requirements-dev.txt` = + playwright, pytest, psutil.
 
 ## 11. Risks register (accepted)
 bf16-on-MPS numerics (mitigated: A/B smoke + fp32 contingency); torch 2.13 Space rejection (mitigated: pin ladder + re-smoke trigger); module-level cuda orphan regression (mitigated: fork_move flag + device-log acceptance); adapter key-prefix mismatch (mitigated: inspect-first + remap); Space cold-boot re-downloads ~14 GB (accepted: private personal Space; persistent storage = money = operator call); streaming absent (accepted: wrapper limitation, documented).
+
+## 12. Long-form chunking
+Text over `LONGFORM_CHAR_THRESHOLD` (400 chars) is split into sentence chunks, synthesized per chunk, and concatenated. Acceptance criteria:
+- **(a) Voice consistency** — Clone reuses the SAME voice prompt/x-vector for every chunk; Preset the same speaker+instruct; Design the same instruct (Design regenerating per-chunk can drift → the honest mitigation is the Design→Clone bridge: design once, clone for long-form).
+- **(b) Click-free joins** — each chunk gets a short (~8 ms) edge fade before the silence gap so joins have no step discontinuity (`audio._edge_fade`).
+- **(c) Seed semantics** — one seed for the whole request (applied once); documented as full-request reproducible on the same device. (Per-chunk `seed+idx` derivation is a future nicety for chunk-level regeneration.)
+- **(d) Sentence boundaries** — splits only after terminators `.!?。！？…`, using `\s*` so CJK (no post-terminator whitespace) chunks correctly; never mid-word/mid-clause.
+
+## 13. Deployment reality (as shipped)
+Verified deltas from the pre-build design: ZeroGPU models **lazy-load in-fork** on first request per mode (module-level preload overran the Space startup window → RUNTIME_ERROR; **D9**); Gradio launched with `server_name="0.0.0.0"`, `ssr_mode=False`; RAM watchdog disabled on ZeroGPU (container psutil misreports); `packages.txt` = sox/ffmpeg; binaries via git-LFS; **LoRA per-request (D8)**. Space verified end-to-end (5/5 modes, real audio) within PRO's included 40 min/day ZeroGPU quota — **no paid credits used**.
