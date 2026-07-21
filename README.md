@@ -8,7 +8,7 @@ sdk_version: 6.17.3
 app_file: app.py
 pinned: false
 license: apache-2.0
-short_description: Cloning, 9 preset voices, voice design & LoRA on Qwen3-TTS 1.7B
+short_description: Cloning, preset voices, voice design & LoRA — Qwen3-TTS
 ---
 
 # qwen-voice-studio
