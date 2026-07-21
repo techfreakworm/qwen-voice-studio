@@ -29,9 +29,14 @@ from .memory import committed_gb
 
 class ModelRegistry:
     def __init__(self, residency: Optional[str] = None):
-        # ZeroGPU: 48 GB half-card easily holds all 3 (~16 GB) — no eviction.
+        # ZeroGPU: models live resident on CPU in the parent process and are moved
+        # to CUDA inside each @spaces.GPU fork (fork_move). This is the pattern that
+        # actually persists across requests — a fork that *loads* the model loses it
+        # when it exits, so lazy-load-in-fork reloads ~4.5 GB every call. With the
+        # parent holding them (warmed in a background thread at startup), each request
+        # is just a fast CPU→GPU move + generate.
         # Local: adaptive by default (evict when RAM is tight).
-        default = "all" if on_zerogpu() else "auto"
+        default = "fork_move" if on_zerogpu() else "auto"
         self.residency = residency or os.environ.get("QVS_RESIDENCY", default)
         self.fork_move = self.residency == "fork_move"
         self.on_cpu = on_zerogpu()
@@ -39,6 +44,7 @@ class ModelRegistry:
         self.evict_ceiling = float(os.environ.get("QVS_EVICT_CEILING", "60"))
         self._models: dict[str, object] = {}
         self._codec_ids: dict[str, int] = {}
+        self._device_logged: set[str] = set()
         self.load_log: list[tuple[str, float, float]] = []
 
     # ---- eviction ------------------------------------------------------------
@@ -90,6 +96,12 @@ class ModelRegistry:
         model = self.get(mode)
         if self.fork_move:
             move_model(model, "cuda")
+        if mode not in self._device_logged:
+            try:
+                print(f"[device] {mode} generating on {next(model.model.parameters()).device}", flush=True)
+                self._device_logged.add(mode)
+            except Exception:
+                pass
         return model
 
     def preload_all(self) -> None:

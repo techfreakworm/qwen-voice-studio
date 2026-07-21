@@ -8,6 +8,12 @@ from __future__ import annotations
 
 import os
 import time
+import warnings
+
+# Quiet benign deprecation noise (gradio's Starlette 422 warning logs once per
+# request; transformers' "generation flags" note) so real issues stand out.
+warnings.filterwarnings("ignore")
+os.environ.setdefault("TRANSFORMERS_VERBOSITY", "error")
 
 import gradio as gr
 import numpy as np
@@ -35,11 +41,16 @@ def _apply_adapter(model, source: str):
     mgr.apply(model, source.strip())
     return mgr
 
-# NOTE: on ZeroGPU we deliberately do NOT preload at module level. A 14 GB
-# download + all-3 load + tensor-packing at import overran the Space startup
-# window (RUNTIME_ERROR before the server ever answered a health check). Instead
-# the Gradio server starts instantly and each checkpoint loads lazily on the
-# first @spaces.GPU request for its mode (one at a time — bounds container RAM).
+# ZeroGPU: warm all three checkpoints into the PARENT process (fork_move residency
+# keeps them resident on CPU) in a background thread, so the server boots instantly
+# for the health check but each @spaces.GPU request is then just a fast CPU→GPU move
+# + generate — NOT a per-request ~4.5 GB reload. Loading them at module level before
+# launch() instead overran the startup window (RUNTIME_ERROR); the thread avoids that
+# while still making requests fast after a ~20 s warmup.
+if on_zerogpu():
+    import threading
+
+    threading.Thread(target=REG.preload_all, daemon=True, name="qvs-warmup").start()
 
 NONE_VOICE = "— none —"
 LANG_CHOICES = list(config.LANGUAGES.keys())
