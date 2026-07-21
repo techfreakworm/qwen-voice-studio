@@ -21,7 +21,19 @@ from qvs.registry import ModelRegistry
 from qvs.ui import theme
 
 REG = ModelRegistry()
-MGR = AdapterManager()
+# LoRA is applied per-generation *inside* the @spaces.GPU fork: ZeroGPU forks do
+# not persist in-place model mutations across requests, so "apply once, use later"
+# can't work there. We track only the selected adapter here (a plain string).
+SELECTED_ADAPTER = {"source": ""}
+
+
+def _apply_adapter(model, source: str):
+    """Attach the adapter to a fresh manager (caller must .unload after gen)."""
+    if not (source or "").strip():
+        return None
+    mgr = AdapterManager()
+    mgr.apply(model, source.strip())
+    return mgr
 
 # NOTE: on ZeroGPU we deliberately do NOT preload at module level. A 14 GB
 # download + all-3 load + tensor-packing at import overran the Space startup
@@ -43,9 +55,8 @@ if not on_zerogpu():
 
 # ---- helpers -----------------------------------------------------------------
 def meter_html() -> str:
-    if MGR.info:
-        state = "on" if MGR.info.enabled else "off"
-        lora = f' · LoRA <b>{MGR.info.source.split("/")[-1]}</b> ({state})'
+    if SELECTED_ADAPTER["source"]:
+        lora = f' · LoRA <b>{SELECTED_ADAPTER["source"].split("/")[-1]}</b>'
     else:
         lora = ""
     if on_zerogpu():
@@ -127,25 +138,36 @@ def do_design(text, instruct, language, longform, *adv):
 
 
 @gpu(duration=120)
-def do_clone(ref_audio, ref_text, xvec, voice_pick, use_adapter, text, language, longform, *adv):
+def do_clone(ref_audio, ref_text, xvec, voice_pick, adapter_source, text, language, longform, *adv):
     if not (text or "").strip():
         return None, status_line("Enter text to synthesize.", hot=True), meter_html()
-    if MGR.info is not None:
-        MGR.set_enabled(bool(use_adapter))
     t0 = time.time()
     model = REG.to_device("base")
-    if voice_pick and voice_pick != NONE_VOICE:
-        items = voices.load_voice(voice_pick)
-        wav, sr = engine.synth_clone(model, text.strip(), config.LANGUAGES[language], gp(adv),
-                                     voice_clone_prompt=items, longform=bool(longform))
-    else:
-        ref = qaudio.ref_from_gradio(ref_audio)
-        if ref is None:
-            return None, status_line("Upload reference audio or pick a saved voice.", hot=True), meter_html()
-        if not xvec and not (ref_text or "").strip():
-            return None, status_line("Add the reference transcript, or enable x-vector-only.", hot=True), meter_html()
-        wav, sr = engine.synth_clone(model, text.strip(), config.LANGUAGES[language], gp(adv),
-                                     ref_audio=ref, ref_text=(ref_text or None), x_vector_only=bool(xvec), longform=bool(longform))
+    lora = None
+    try:
+        if (adapter_source or "").strip():
+            try:
+                lora = _apply_adapter(model, adapter_source)
+            except Exception as e:
+                return None, status_line(f"adapter error: {type(e).__name__}: {e}", hot=True), meter_html()
+        if voice_pick and voice_pick != NONE_VOICE:
+            items = voices.load_voice(voice_pick)
+            wav, sr = engine.synth_clone(model, text.strip(), config.LANGUAGES[language], gp(adv),
+                                         voice_clone_prompt=items, longform=bool(longform))
+        else:
+            ref = qaudio.ref_from_gradio(ref_audio)
+            if ref is None:
+                return None, status_line("Upload reference audio or pick a saved voice.", hot=True), meter_html()
+            if not xvec and not (ref_text or "").strip():
+                return None, status_line("Add the reference transcript, or enable x-vector-only.", hot=True), meter_html()
+            wav, sr = engine.synth_clone(model, text.strip(), config.LANGUAGES[language], gp(adv),
+                                         ref_audio=ref, ref_text=(ref_text or None), x_vector_only=bool(xvec), longform=bool(longform))
+    finally:
+        if lora is not None:
+            try:
+                lora.unload(model)
+            except Exception:
+                pass
     return qaudio.to_gradio(wav, sr), _done(t0, wav), meter_html()
 
 
@@ -163,47 +185,60 @@ def do_library_gen(voice_name, text, language, longform, *adv):
     return qaudio.to_gradio(wav, sr), _done(t0, wav), meter_html()
 
 
-@gpu(duration=90)
-def do_lora_quicktest(sentence):
-    if not MGR.info:
-        return None, status_line("Apply an adapter first.", hot=True)
-    emb = load_speaker_embedding(MGR.info.source)
+@gpu(duration=120)
+def do_lora_quicktest(source, sentence):
+    src = (source or "").strip()
+    if not src:
+        return None, status_line("Enter an adapter (repo id or path) above first.", hot=True)
+    emb = load_speaker_embedding(src)
     if emb is None:
-        return None, status_line("This adapter ships no voice — test it from the Clone tab with your own reference.", hot=True)
+        return None, status_line("This adapter ships no voice — use it in the Clone tab with your own reference.", hot=True)
     import torch
     from qwen_tts import VoiceClonePromptItem
     model = REG.to_device("base")
-    item = VoiceClonePromptItem(ref_code=None,
-                                ref_spk_embedding=torch.as_tensor(emb).to(model.device).to(torch.bfloat16),
-                                x_vector_only_mode=True, icl_mode=False, ref_text=None)
-    wav, sr = engine.synth_clone(model, sentence.strip() or "Hello from the adapter.", "Auto",
-                                 engine.GenParams(max_new_tokens=512), voice_clone_prompt=[item], longform=False)
-    return qaudio.to_gradio(wav, sr), status_line("quick test done")
-
-
-# non-GPU management callbacks
-def do_apply_lora(source):
-    if not (source or "").strip():
-        return status_line("Enter a Hugging Face repo id or local path.", hot=True), meter_html(), gr.update()
+    lora = None
     try:
-        info = MGR.apply(REG.to_device("base"), source.strip())
+        lora = _apply_adapter(model, src)
+        item = VoiceClonePromptItem(ref_code=None,
+                                    ref_spk_embedding=torch.as_tensor(emb).to(model.device).to(torch.bfloat16),
+                                    x_vector_only_mode=True, icl_mode=False, ref_text=None)
+        wav, sr = engine.synth_clone(model, sentence.strip() or "Hello from the adapter.", "Auto",
+                                     engine.GenParams(max_new_tokens=512), voice_clone_prompt=[item], longform=False)
+        return qaudio.to_gradio(wav, sr), status_line("quick test done")
     except Exception as e:
-        return status_line(f"Couldn't load adapter: {type(e).__name__}: {e}", hot=True), meter_html(), gr.update()
-    return _adapter_report(info), meter_html(), gr.update(value=True, interactive=True)
+        return None, status_line(f"quick test failed: {type(e).__name__}: {e}", hot=True)
+    finally:
+        if lora is not None:
+            try:
+                lora.unload(model)
+            except Exception:
+                pass
 
 
-def do_toggle_lora(enabled):
-    MGR.set_enabled(bool(enabled))
-    return meter_html()
+# management callbacks — validate/inspect only (adapter is applied per generation)
+def do_apply_lora(source):
+    src = (source or "").strip()
+    if not src:
+        return status_line("Enter a Hugging Face repo id or local path.", hot=True), meter_html()
+    try:
+        from qvs.lora import read_adapter_config, resolve_adapter
+        cfg = read_adapter_config(resolve_adapter(src))
+    except Exception as e:
+        return status_line(f"Couldn't load adapter: {type(e).__name__}: {e}", hot=True), meter_html()
+    SELECTED_ADAPTER["source"] = src
+    has_emb = load_speaker_embedding(src) is not None
+    targets = ", ".join(t.replace("_proj", "") for t in (cfg.get("target_modules") or []))
+    emb = " · ships a voice" if has_emb else ""
+    return (status_line(f"selected <b>{src.split('/')[-1]}</b> · r={cfg.get('r')} α={cfg.get('lora_alpha')} · "
+                        f"{targets}{emb} — applied per generation (Clone tab or Quick test)"), meter_html())
 
 
 def do_unload_lora():
-    if not MGR.info:
-        return status_line("No adapter applied."), meter_html(), gr.update(value=False)
-    MGR.unload(REG.get("base"))
-    return status_line("removed adapter — Base restored"), meter_html(), gr.update(value=False)
+    SELECTED_ADAPTER["source"] = ""
+    return status_line("adapter cleared."), meter_html()
 
 
+@gpu(duration=90)
 def do_save_voice(name, ref_audio, ref_text, xvec):
     if not (name or "").strip():
         return status_line("Give the voice a name.", hot=True)
@@ -224,6 +259,7 @@ def do_lora_voice_to_library(source, name):
     return status_line(f'saved "{(name or "lora_voice").strip()}" to library')
 
 
+@gpu(duration=90)
 def do_design_to_library(design_audio, design_text, name):
     if design_audio is None:
         return status_line("Generate a designed voice first.", hot=True)
@@ -253,7 +289,7 @@ def build() -> gr.Blocks:
                         c_reftext = gr.Textbox(label="Reference transcript", lines=2, placeholder="What the reference says (improves fidelity).")
                         c_xvec = gr.Checkbox(False, label="x-vector only (skip transcript, lower fidelity)")
                         c_voice = gr.Dropdown([NONE_VOICE] + voices.list_voices(), value=NONE_VOICE, label="…or use a saved voice")
-                        c_useadapter = gr.Checkbox(False, label="Apply active LoRA adapter (manage in LoRA Lab)")
+                        c_adapter = gr.Textbox(label="LoRA adapter (optional — HF repo id)", placeholder="e.g. loubna1101/Qwen3-TTS-Darija-LoRa")
                         c_text = gr.Textbox(label="Text to speak", lines=4, placeholder="Type what the cloned voice should say…")
                         c_lang = gr.Dropdown(LANG_CHOICES, value="Auto (detect)", label="Language")
                         c_long = gr.Checkbox(True, label="Long-form chunking")
@@ -263,7 +299,7 @@ def build() -> gr.Blocks:
                         c_out = gr.Audio(label="Output", type="numpy", interactive=False)
                         c_status = gr.HTML(status_line("Ready."))
                 voice_pickers.append(c_voice)
-                c_btn.click(do_clone, [c_ref, c_reftext, c_xvec, c_voice, c_useadapter, c_text, c_lang, c_long, *c_adv], [c_out, c_status, meter])
+                c_btn.click(do_clone, [c_ref, c_reftext, c_xvec, c_voice, c_adapter, c_text, c_lang, c_long, *c_adv], [c_out, c_status, meter])
 
             # ---- Preset Voices ----
             with gr.Tab("Preset Voices"):
@@ -314,9 +350,8 @@ def build() -> gr.Blocks:
                     with gr.Column():
                         l_src = gr.Textbox(label="Adapter (HF repo id or local path)", value="loubna1101/Qwen3-TTS-Darija-LoRa")
                         with gr.Row():
-                            l_apply = gr.Button("Apply", variant="primary", elem_classes="qvs-generate")
-                            l_toggle = gr.Checkbox(False, label="Adapter on", interactive=False)
-                            l_remove = gr.Button("Remove", variant="secondary")
+                            l_apply = gr.Button("Load & inspect", variant="primary", elem_classes="qvs-generate")
+                            l_remove = gr.Button("Clear", variant="secondary")
                         gr.HTML('<div class="qvs-eyebrow">save the adapter\'s bundled voice to your library</div>')
                         with gr.Row():
                             l_vname = gr.Textbox(label="Save voice as", value="darija_voice", scale=2)
@@ -327,10 +362,9 @@ def build() -> gr.Blocks:
                         l_testtext = gr.Textbox(label="Test sentence", value="Salam, hada ikhtibar dyal les voix.", lines=2)
                         l_testbtn = gr.Button("Quick test", variant="secondary")
                         l_testout = gr.Audio(label="Quick test output", type="numpy", interactive=False)
-                l_apply.click(do_apply_lora, [l_src], [l_status, meter, l_toggle])
-                l_toggle.change(do_toggle_lora, [l_toggle], [meter])
-                l_remove.click(do_unload_lora, None, [l_status, meter, l_toggle])
-                l_testbtn.click(do_lora_quicktest, [l_testtext], [l_testout, l_status])
+                l_apply.click(do_apply_lora, [l_src], [l_status, meter])
+                l_remove.click(do_unload_lora, None, [l_status, meter])
+                l_testbtn.click(do_lora_quicktest, [l_src, l_testtext], [l_testout, l_status])
 
             # ---- Voice Library ----
             with gr.Tab("Voice Library"):
