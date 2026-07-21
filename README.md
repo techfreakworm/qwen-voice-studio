@@ -15,6 +15,8 @@ short_description: Cloning, preset voices, voice design & LoRA — Qwen3-TTS
 
 The open-source voice studio for **Qwen3-TTS-12Hz-1.7B** — voice cloning, 9 premium preset voices with emotion control, and text-described voice design, in one Gradio app. **Fidelity first.** Runs natively on Apple silicon (MPS) and deploys to Hugging Face ZeroGPU.
 
+![Qwen Voice Studio](docs/samples/studio-clone.png)
+
 ## Features
 - **3-second voice cloning** — reference audio + transcript, or x-vector-only *(Base)*
 - **9 preset voices** incl. Beijing/Sichuan dialects, with natural-language emotion/style instructions *(CustomVoice)*
