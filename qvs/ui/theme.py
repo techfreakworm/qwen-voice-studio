@@ -102,17 +102,23 @@ body, .gradio-container {{
 }}
 .qvs-meter b {{ color: var(--signal); font-weight:500; }}
 
-/* community banner — top strip */
+/* community banner — top strip: support nudge (left) · community pills (right) */
 .qvs-banner {{
-  display:flex; align-items:center; flex-wrap:wrap; gap:10px;
+  display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px 16px;
   padding:9px 14px; margin: 2px 0 6px;
   border:1px solid var(--line); border-radius:8px;
   background: linear-gradient(90deg, rgba(240,169,59,0.09), rgba(255,107,74,0.06) 55%, rgba(0,0,0,0.15));
 }}
-.qvs-banner-label {{
-  font-family:'IBM Plex Mono', monospace; font-size:11px; letter-spacing:0.14em;
-  text-transform:uppercase; color:var(--muted);
+/* the support nudge — one line, mono; its heart/star is the ONLY coral glyph, no motion */
+.qvs-nudge {{
+  display:inline-flex; align-items:center; gap:7px; text-decoration:none !important;
+  font-family:'IBM Plex Mono', monospace; font-size:12.5px; letter-spacing:0.02em; color:var(--muted);
 }}
+.qvs-nudge b {{ color:var(--text); font-weight:500; }}
+.qvs-nudge .heart {{ color:var(--hot); }}
+.qvs-nudge .up {{ color:var(--signal); }}
+a.qvs-nudge:hover b {{ color:var(--signal); }}   /* hover brighten (link/local only) */
+.qvs-banner-actions {{ display:inline-flex; align-items:center; flex-wrap:wrap; gap:8px; }}
 .qvs-banner-btn {{
   display:inline-flex; align-items:center; gap:8px;
   padding:6px 12px; border-radius:6px; text-decoration:none !important;
@@ -123,10 +129,7 @@ body, .gradio-container {{
 .qvs-banner-btn:hover {{ border-color:var(--signal); background:rgba(240,169,59,0.12); }}
 .qvs-banner-btn .arw {{ color:var(--muted); transition: transform .15s ease, color .15s ease; }}
 .qvs-banner-btn:hover .arw {{ transform:translateX(3px); color:var(--signal); }}
-.qvs-banner-btn.skool {{ color:var(--hot) !important; }}
-.qvs-banner-btn.skool:hover {{ border-color:var(--hot); background:rgba(255,107,74,0.12); }}
-.qvs-banner-btn.skool:hover .arw {{ color:var(--hot); }}
-@media (max-width:640px){{ .qvs-banner-label {{ width:100%; }} }}
+@media (max-width:560px){{ .qvs-banner {{ justify-content:flex-start; }} }}
 
 /* eyebrow labels */
 .qvs-eyebrow {{
@@ -200,13 +203,39 @@ def header_html() -> str:
 
 
 def banner_html() -> str:
+    """Top community strip: a support nudge (left) + Discord/Skool pills (right).
+
+    The nudge copy adapts to where the app runs — the same ``on_zerogpu()``
+    switch the device layer uses. On the Space the heart is HF's native like
+    button (top-right chrome), so we point at it; locally the honest equivalent
+    is a GitHub star, which we can actually link.
+    """
+    from ..device import on_zerogpu
+
+    if on_zerogpu():
+        # The HF like button sits in the top chrome next to the Space title — "at
+        # the top" (ltx's proven, position-agnostic phrasing), not a named corner.
+        nudge = (
+            '<span class="qvs-nudge">'
+            '<span class="heart">&#9829;</span> enjoying it? '
+            '<b>drop a like at the top&nbsp;<span class="up">&uarr;</span></b></span>'
+        )
+    else:
+        nudge = (
+            '<a class="qvs-nudge" href="https://github.com/techfreakworm/qwen-voice-studio" '
+            'target="_blank" rel="noopener noreferrer">'
+            '<span class="heart">&#9733;</span> useful? '
+            '<b>star it on github&nbsp;<span class="up">&rarr;</span></b></a>'
+        )
     return (
         '<div class="qvs-banner">'
-        '<span class="qvs-banner-label">Join the community</span>'
+        f'{nudge}'
+        '<span class="qvs-banner-actions">'
         '<a class="qvs-banner-btn" href="https://discord.gg/qbn3exeEXa" target="_blank" rel="noopener noreferrer">'
         'Discord — chat with the maker <span class="arw">&rarr;</span></a>'
-        '<a class="qvs-banner-btn skool" href="https://www.skool.com/techfreaks-ai-club-6037/about" target="_blank" rel="noopener noreferrer">'
+        '<a class="qvs-banner-btn" href="https://www.skool.com/techfreaks-ai-club-6037/about" target="_blank" rel="noopener noreferrer">'
         'Skool — TechFreaks AI Club <span class="arw">&rarr;</span></a>'
+        '</span>'
         '</div>'
     )
 
