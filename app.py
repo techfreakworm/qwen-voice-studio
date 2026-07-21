@@ -74,8 +74,9 @@ def meter_html() -> str:
 def gp(a) -> engine.GenParams:
     return engine.GenParams(
         temperature=float(a[0]), top_p=float(a[1]), top_k=int(a[2]), repetition_penalty=float(a[3]),
-        subtalker_temperature=float(a[4]), subtalker_top_p=float(a[5]), subtalker_top_k=int(a[6]),
-        max_new_tokens=int(a[7]), seed=int(a[8]),
+        subtalker_dosample=bool(a[4]),
+        subtalker_temperature=float(a[5]), subtalker_top_p=float(a[6]), subtalker_top_k=int(a[7]),
+        max_new_tokens=int(a[8]), seed=int(a[9]),
     )
 
 
@@ -88,13 +89,14 @@ def advanced_controls():
             top_k = gr.Slider(0, 100, d.top_k, step=1, label="Top-k")
             repetition_penalty = gr.Slider(1.0, 2.0, d.repetition_penalty, step=0.01, label="Repetition penalty")
         with gr.Row():
+            st_dosample = gr.Checkbox(True, label="Sub-talker sampling")
             st_temp = gr.Slider(0.0, 1.5, d.subtalker_temperature, step=0.05, label="Sub-talker temp")
             st_top_p = gr.Slider(0.0, 1.0, d.subtalker_top_p, step=0.05, label="Sub-talker top-p")
             st_top_k = gr.Slider(0, 100, d.subtalker_top_k, step=1, label="Sub-talker top-k")
         with gr.Row():
             max_new = gr.Slider(128, 4096, d.max_new_tokens, step=64, label="Max new tokens")
             seed = gr.Number(d.seed, precision=0, label="Seed (-1 = random)")
-    return [temperature, top_p, top_k, repetition_penalty, st_temp, st_top_p, st_top_k, max_new, seed]
+    return [temperature, top_p, top_k, repetition_penalty, st_dosample, st_temp, st_top_p, st_top_k, max_new, seed]
 
 
 def status_line(msg: str, hot: bool = False) -> str:

@@ -38,7 +38,7 @@ Commit at least per-task, push regularly; long runs = background shells with mon
 Both hard gates are met and the Space is verified 5/5. Deferred, in rough priority:
 
 **Feature / polish gaps:**
-1. **`subtalker_dosample` UI exposure** — the one known gap against the "every feature" mandate; smallest possible scope; first in line for any follow-up session.
+1. ~~`subtalker_dosample` UI exposure~~ — **DONE** (Advanced rack now has a "Sub-talker sampling" toggle; "every feature" mandate fully met).
 2. Dynamic-`duration` callable (queue-priority polish; does NOT affect quota — quota = effective runtime × size multiplier, not declared duration).
 3. int16 mic-input scaling consistency (scale by dtype, don't peak-normalize).
 4. Residency hysteresis (re-expand < 55 GB) + status-strip eviction visibility.

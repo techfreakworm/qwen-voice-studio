@@ -24,6 +24,7 @@ class GenParams:
     top_p: float = GEN_DEFAULTS.top_p
     top_k: int = GEN_DEFAULTS.top_k
     repetition_penalty: float = GEN_DEFAULTS.repetition_penalty
+    subtalker_dosample: bool = True
     subtalker_temperature: float = GEN_DEFAULTS.subtalker_temperature
     subtalker_top_p: float = GEN_DEFAULTS.subtalker_top_p
     subtalker_top_k: int = GEN_DEFAULTS.subtalker_top_k
