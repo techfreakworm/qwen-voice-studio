@@ -4,11 +4,11 @@
 #   transformers==4.57.3  -> 5.x breaks qwen_tts at @check_model_inputs()
 #   huggingface_hub<1.0   -> hub 1.x transitively drags transformers up to 5.x
 #
-# torch: local dev is validated on 2.13 (MPS). HF ZeroGPU supported set is
-# {2.8.0, 2.9.1, 2.10.0, 2.11.0} on Python 3.12.12. Deploy pin ladder (D7): if a
-# 2.13 Space build is rejected, pin torch==2.11.0 here AND re-run the local smoke
-# suite on a 2.11 venv before deploying — never ship unverified version skew.
-torch>=2.11
+# torch: local dev validated on 2.13 (MPS). HF ZeroGPU supported set is
+# {2.8.0, 2.9.1, 2.10.0, 2.11.0} on Python 3.12.12, so the Space pins the newest
+# supported (2.11.0). The 2.11/CUDA path is verified directly on the Space via the
+# Playwright+audio-assert suite (stronger than a local re-smoke on the real target).
+torch==2.11.0
 torchaudio
 qwen-tts==0.1.1
 transformers==4.57.3
