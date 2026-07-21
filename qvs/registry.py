@@ -1,43 +1,91 @@
 """Model registry — owns the three checkpoints and where they live.
 
-Local (MPS/CUDA): models load straight onto the device and stay resident
-(measured peak ~70 GB committed for all three on MPS — under the 80 GB gate).
+Residency (env ``QVS_RESIDENCY``):
+  - ``auto`` (default): keep models resident until committed memory crosses
+    ``QVS_EVICT_CEILING`` (default 60 GB), then evict the others before loading a
+    new one. On an unloaded machine this behaves like ``all``; on the operator's
+    loaded workstation (~58 GB baseline) it degrades to single-resident so a
+    generation spike never breaches the 76 GB abort. This is the DESIGN §6
+    adaptive-degrade, driven by live memory rather than only startup baseline.
+  - ``all``: never evict (fastest switching; needs headroom).
+  - ``single``: never hold more than the current model.
+  - ``fork_move``: ZeroGPU fallback — build on CPU, move to cuda inside the fork.
 
-ZeroGPU: built on CPU at startup, then moved onto CUDA *inside* the
-``@spaces.GPU`` fork per request (via :meth:`to_device`) — this avoids the
-"model never actually on cuda" trap where a module ``.to()`` orphans the weights.
+Local (MPS/CUDA): ``device_map`` load straight onto the device. ZeroGPU:
+built on CPU at startup then ``.to('cuda')`` at module level (CUDA emulation),
+unless ``fork_move`` moves inside the ``@spaces.GPU`` fork.
 """
 from __future__ import annotations
 
+import gc
+import os
 from typing import Optional
 
 from .config import MODEL_REPOS
 from .device import on_zerogpu, target_device
-from .engine import load_model, move_model
+from .engine import free_cache, load_model, move_model
+from .memory import committed_gb
 
 
 class ModelRegistry:
-    def __init__(self, load_on_cpu: Optional[bool] = None):
-        self.load_on_cpu = on_zerogpu() if load_on_cpu is None else load_on_cpu
+    def __init__(self, residency: Optional[str] = None):
+        self.residency = residency or os.environ.get("QVS_RESIDENCY", "auto")
+        self.fork_move = self.residency == "fork_move"
+        self.on_cpu = on_zerogpu()
         self.device = "cuda" if on_zerogpu() else target_device()
+        self.evict_ceiling = float(os.environ.get("QVS_EVICT_CEILING", "60"))
         self._models: dict[str, object] = {}
+        self._codec_ids: dict[str, int] = {}
+        self.load_log: list[tuple[str, float, float]] = []
+
+    # ---- eviction ------------------------------------------------------------
+    def _evict_others(self, keep: str) -> None:
+        for mode in [m for m in self._models if m != keep]:
+            del self._models[mode]
+            self._codec_ids.pop(mode, None)
+            print(f"[registry] evicted {mode} to free memory", flush=True)
+        gc.collect()
+        free_cache()
+
+    def _should_evict(self) -> bool:
+        if self.residency == "all" or self.fork_move:
+            return False
+        if self.residency == "single":
+            return True
+        return committed_gb() > self.evict_ceiling  # auto
+
+    # ---- loading -------------------------------------------------------------
+    def _load_one(self, mode: str):
+        if self.on_cpu and self.fork_move:
+            return load_model(MODEL_REPOS[mode], device=self.device, load_on_cpu=True)
+        if self.on_cpu:  # ZeroGPU non-fork: build on CPU, move at module level
+            m = load_model(MODEL_REPOS[mode], device=self.device, load_on_cpu=True)
+            return move_model(m, "cuda")
+        return load_model(MODEL_REPOS[mode], device=self.device)  # local device_map
 
     def get(self, mode: str):
-        """Return the model for a mode, loading it on first use."""
         if mode not in MODEL_REPOS:
             raise KeyError(f"unknown mode {mode!r}; expected one of {list(MODEL_REPOS)}")
         if mode not in self._models:
-            self._models[mode] = load_model(
-                MODEL_REPOS[mode],
-                device=self.device,
-                load_on_cpu=self.load_on_cpu,
-            )
+            if self._should_evict():
+                self._evict_others(mode)
+            before = committed_gb()
+            model = self._load_one(mode)
+            after = committed_gb()
+            self._models[mode] = model
+            try:
+                self._codec_ids[mode] = id(model.model.speech_tokenizer)
+            except Exception:
+                pass
+            self.load_log.append((mode, after - before, after))
+            print(f"[registry] loaded {mode}: +{after - before:.1f} GB -> {after:.1f} GB committed "
+                  f"(resident: {list(self._models)})", flush=True)
         return self._models[mode]
 
     def to_device(self, mode: str):
-        """Ensure the model is on the compute device (no-op unless CPU-built)."""
+        """Ensure the model is on the compute device (moves in-fork if fork_move)."""
         model = self.get(mode)
-        if self.load_on_cpu:
+        if self.fork_move:
             move_model(model, "cuda")
         return model
 
@@ -46,9 +94,18 @@ class ModelRegistry:
             self.get(mode)
 
     def reload(self, mode: str):
-        """Drop and rebuild a model (used to cleanly remove a merged LoRA)."""
         self._models.pop(mode, None)
+        self._codec_ids.pop(mode, None)
+        gc.collect()
+        free_cache()
         return self.get(mode)
+
+    def codec_shared(self) -> Optional[bool]:
+        """True if loaded models share one codec instance; None if <2 loaded."""
+        ids = list(self._codec_ids.values())
+        if len(ids) < 2:
+            return None
+        return len(set(ids)) == 1
 
     @property
     def loaded(self) -> list[str]:
