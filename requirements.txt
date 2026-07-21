@@ -1,0 +1,24 @@
+# qwen-voice-studio — Space runtime dependencies. See docs/DESIGN.md §10.
+#
+# HARD PINS (learned the hard way):
+#   transformers==4.57.3  -> 5.x breaks qwen_tts at @check_model_inputs()
+#   huggingface_hub<1.0   -> hub 1.x transitively drags transformers up to 5.x
+#
+# torch: local dev is validated on 2.13 (MPS). HF ZeroGPU supported set is
+# {2.8.0, 2.9.1, 2.10.0, 2.11.0} on Python 3.12.12. Deploy pin ladder (D7): if a
+# 2.13 Space build is rejected, pin torch==2.11.0 here AND re-run the local smoke
+# suite on a 2.11 venv before deploying — never ship unverified version skew.
+torch>=2.11
+torchaudio
+qwen-tts==0.1.1
+transformers==4.57.3
+huggingface_hub<1.0
+accelerate==1.12.0
+peft==0.19.1
+gradio==6.17.3
+soundfile
+librosa
+numpy
+psutil
+# ZeroGPU only (imported optionally; a no-op shim is used when absent locally)
+spaces

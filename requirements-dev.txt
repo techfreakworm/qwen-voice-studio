@@ -1,0 +1,4 @@
+# Development / testing extras — NOT shipped to the Space.
+-r requirements.txt
+pytest
+playwright

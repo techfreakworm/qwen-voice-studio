@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+
+# Model / audio artifacts
+*.wav
+*.mp3
+*.flac
+*.pt
+!assets/**/*.png
+!docs/samples/**
+outputs/
+voice_library/
+data/
+.cache/
+
+# HF / torch
+.huggingface/
+*.lock
+
+# OS / editors
+.DS_Store
+.idea/
+.vscode/
+*.log
