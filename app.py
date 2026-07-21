@@ -32,22 +32,29 @@ NONE_VOICE = "— none —"
 LANG_CHOICES = list(config.LANGUAGES.keys())
 SPEAKER_CHOICES = [(f"{s.display} — {s.description.rstrip('.')} ({s.language})", s.key) for s in config.SPEAKERS]
 
-# Watchdog is active in every model-touching run (DESIGN §6).
-MemoryGuard(hard_gb=float(os.environ.get("QVS_MEMGUARD_HARD", "76")),
-            soft_gb=float(os.environ.get("QVS_MEMGUARD_SOFT", "72"))).start()
+# RAM watchdog protects the local macOS gate (DESIGN §6). On ZeroGPU the
+# constraint is the 48 GB card, not container RAM (where psutil misreports),
+# so the RAM guard is disabled there.
+if not on_zerogpu():
+    MemoryGuard(hard_gb=float(os.environ.get("QVS_MEMGUARD_HARD", "76")),
+                soft_gb=float(os.environ.get("QVS_MEMGUARD_SOFT", "72"))).start()
 
 
 # ---- helpers -----------------------------------------------------------------
 def meter_html() -> str:
-    snap = snapshot()
     if MGR.info:
         state = "on" if MGR.info.enabled else "off"
         lora = f' · LoRA <b>{MGR.info.source.split("/")[-1]}</b> ({state})'
     else:
         lora = ""
+    if on_zerogpu():
+        mem = "MEM <b>ZeroGPU</b>"  # container RAM is not the constraint here
+    else:
+        snap = snapshot()
+        mem = f"MEM <b>{snap.committed:.0f}</b>/{snap.total:.0f} GB"
     return (
         f'<div class="qvs-meter">DEVICE <b>{target_device()}</b> · DTYPE <b>bf16</b> · '
-        f'ATTN <b>{get_attn_impl()}</b> · MEM <b>{snap.committed:.0f}</b>/{snap.total:.0f} GB · '
+        f'ATTN <b>{get_attn_impl()}</b> · {mem} · '
         f'RESIDENT <b>{len(REG.loaded)}</b>/3{lora}</div>'
     )
 
