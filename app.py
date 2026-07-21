@@ -23,10 +23,11 @@ from qvs.ui import theme
 REG = ModelRegistry()
 MGR = AdapterManager()
 
-# ZeroGPU: place all three checkpoints on CUDA at module level (emulation mode),
-# per the ZeroGPU guidance — never lazy-move inside @spaces.GPU.
-if on_zerogpu():
-    REG.preload_all()
+# NOTE: on ZeroGPU we deliberately do NOT preload at module level. A 14 GB
+# download + all-3 load + tensor-packing at import overran the Space startup
+# window (RUNTIME_ERROR before the server ever answered a health check). Instead
+# the Gradio server starts instantly and each checkpoint loads lazily on the
+# first @spaces.GPU request for its mode (one at a time — bounds container RAM).
 
 NONE_VOICE = "— none —"
 LANG_CHOICES = list(config.LANGUAGES.keys())
